@@ -1,0 +1,131 @@
+---
+title: "Démo Rmarkdown Notebook - Part 2"
+author: "Rémi Julien"
+date: "06/01/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# 1 Introduction
+## 1.1 Chargement des librairies
+Dans ce tutoriel, nous avons besoin des librairies suivantes :  
+
+- `httr` : accès au site web open data,  
+- `jsonlite` : manipulation de fichier `json`,  
+- `dplyr` : évidemment !  
+- `kableExtra` : mise en forme des tables,  
+- `ggplot2` :  The Grammar of Graphics !  
+- `highcharter` : graphiques interactifs,  
+- `plotly` : graphiques interactifs,  
+- `leaflet` : cartographie.  
+
+```{r lib, include=TRUE, eval=TRUE}
+library(httr)
+library(jsonlite)
+library(dplyr)
+library(lubridate)
+library(kableExtra)
+library(ggplot2)
+library(highcharter)
+library(plotly)
+library(leaflet)
+```
+
+
+## 1.2 Chargement des données
+Il s'agit des 'Données hospitalières COVID-19 en Région Centre-Val de Loire' disponible via l'API du site d'[open data data de la Région Centre-Val-de-Loire](https://data.centrevaldeloire.fr/pages/accueil/).  
+
+```{r}
+dataCovid <- function() {
+  
+  # 1. Importe les données de l'API
+  # Accès à l'API
+  url <- "https://data.centrevaldeloire.fr/api/records/1.0/search/?dataset=donnees-hospitalieres-relatives-a-lepidemie-de-covid-19-en-france&q=&rows=10000&facet=date&facet=countrycode_iso_3166_1_alpha3&facet=region_min&facet=nom_dep_min&facet=sex"
+  
+  # Transposition du contenu au format json à l'orgine vers un format dataframe
+  content <- fromJSON(url)
+  
+  # Extraction des données d'intérêt contenu dans la clé "records - fields"
+  data <- content$records$fields
+  
+  
+  # 2. Transforme les donnée
+  dataTransf <- data %>%
+    select(!c(reg_code, countrycode_iso_3166_1_alpha3, region_min)) %>%
+    rename(Nb_quotidien_deces = day_death_new,
+           Nb_quotidien_admis_hosp = day_hosp_new,
+           Departement = nom_dep_min,
+           Point_geo = geo_point_2d,
+           Genre = sex,
+           Nb_actuellement_soins_intensifs = day_intcare,
+           Total_retour_domicile = tot_out,
+           Code_departement = dep_code,
+           Total_deces = tot_death,
+           Date = date,
+           Nb_actuellement_hospitalises = day_hosp,
+           Nb_quotidien_retour_domicile = day_out_new,
+           Nb_quotidien_reanimation = day_intcare_new) %>%
+    mutate(Date = as_date(Date),
+           Annee = year(Date),
+           Mois = month(Date),
+           Jour = wday(Date, label = TRUE, abbr=FALSE, week_start = 1),
+           Jour_index = day(Date)) %>%
+    arrange(Code_departement)
+  
+  
+  # 3. Données statistiques par Département
+  statDpt <- dataTransf %>%
+        group_by(Departement) %>%
+        summarise(Nb_hospitalises = sum(Nb_quotidien_admis_hosp, na.rm=TRUE),
+                  Nb_deces = sum(Nb_quotidien_deces, na.rm=TRUE)) %>%
+        arrange(desc(Nb_hospitalises, Nb_deces))
+  
+  # 4. Données statistiques par Genre
+  statGenre <- dataTransf %>%
+    filter(Genre %in% c("Femme", "Homme")) %>%
+    group_by(Genre, Departement) %>%
+    summarise(Total_retour_domicile = max(Total_retour_domicile, na.rm=TRUE),
+              Total_deces = max(Total_deces, na.rm=TRUE)) %>%
+    arrange(desc(Departement, Genre))
+  
+  # 5. Données statistiques par Mois et Département
+  statMois <- dataTransf %>%
+        group_by(Departement, Mois) %>%
+        summarise(Nb_hospitalises = sum(Nb_quotidien_admis_hosp, na.rm=TRUE),
+                  Nb_deces = sum(Nb_quotidien_deces, na.rm=TRUE)) %>%
+        arrange(desc(Nb_hospitalises, Nb_deces))
+  
+  # 6. Restitue l'ensemble des données
+  return(list(data = dataTransf, statDpt = statDpt, statGenre = statGenre, statMois = statMois))
+  
+}
+
+data <- dataCovid()$data
+
+kable(data) %>%
+  kable_styling(fixed_thead = T) %>%
+  scroll_box(width = "100%", height = "200px")
+```
+
+Les données hospitalières sont convenablement chargées, transformées et mise en forme.
+
+
+## 2 Librairie `plotly`
+La bibliothèque de graphiques R de [Plotly](https://plotly.com/r/) crée des graphiques interactifs de qualité publication.  
+Exemples de création de graphiques linéaires, de nuages de points, de graphiques en aires, de graphiques à barres, de barres d'erreur, de boîtes à moustaches, d'histogrammes, de cartes thermiques, de sous-graphiques, de graphiques à axes multiples et de graphiques 3D (basés sur WebGL).
+
+
+```{r}
+# Agrégation par Date
+dataDpt <- data %>%
+  group_by(Date, Departement) %>%
+  summarise(Nb_quotidien_admis_hosp = sum(Nb_quotidien_admis_hosp, na.rm = TRUE))
+
+plot_ly(dataDpt, y = ~Nb_quotidien_admis_hosp, color = ~Departement, type = "box")
+```
+
+
